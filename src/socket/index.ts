@@ -7,7 +7,14 @@ let io: SocketIOServer | undefined;
 
 export function initSocket(httpServer: HttpServer): SocketIOServer {
   io = new SocketIOServer(httpServer, {
-    cors: { origin: env.clientUrl, credentials: true },
+    cors: { 
+      origin: [
+        env.clientUrl,
+        "http://localhost:3000", // Allow local frontend
+        "http://localhost:3001"  // Allow port 3001 as fallback
+      ], 
+      credentials: true 
+    },
   });
 
   // Authenticate every socket connection using the same JWT access token

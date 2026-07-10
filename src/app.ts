@@ -18,6 +18,7 @@ export function createApp() {
     cors({
       origin: [
         env.clientUrl,
+        "http://localhost:3000", // Allow local frontend
         "http://localhost:3001", // Allow port 3001 as fallback
       ],
       credentials: true,
