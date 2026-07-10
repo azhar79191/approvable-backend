@@ -10,6 +10,8 @@ export function initSocket(httpServer: HttpServer): SocketIOServer {
     cors: { 
       origin: [
         env.clientUrl,
+        "https://approvable-three.vercel.app", // Without trailing slash
+        "https://approvable-three.vercel.app/", // With trailing slash
         "http://localhost:3000", // Allow local frontend
         "http://localhost:3001"  // Allow port 3001 as fallback
       ], 

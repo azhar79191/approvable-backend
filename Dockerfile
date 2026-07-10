@@ -1,8 +1,8 @@
 # ---- Build stage ----
-FROM node:20-slim AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
-# Install required system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+# Install required system dependencies for Prisma
+RUN apk add --no-cache openssl1.1-compat
 COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci
@@ -11,10 +11,10 @@ RUN npx prisma generate
 RUN npm run build
 
 # ---- Production stage ----
-FROM node:20-slim
+FROM node:20-alpine
 WORKDIR /app
-# Install required system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+# Install required system dependencies for Prisma
+RUN apk add --no-cache openssl1.1-compat
 ENV NODE_ENV=production
 COPY package*.json ./
 COPY prisma ./prisma
