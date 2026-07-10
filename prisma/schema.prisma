@@ -1,0 +1,587 @@
+// ============================================================================
+// Social Media Approval Platform — Prisma Schema
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum RoleName {
+  SUPER_ADMIN
+  AGENCY_ADMIN
+  TEAM_MEMBER
+  CLIENT
+}
+
+enum PostStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  NEEDS_CHANGES
+  SCHEDULED
+  PUBLISHED
+}
+
+enum PostType {
+  IMAGE
+  VIDEO
+  CAROUSEL
+  STORY
+  REEL
+  LINKEDIN_PDF
+  TEXT
+}
+
+enum Platform {
+  FACEBOOK
+  INSTAGRAM
+  TWITTER
+  LINKEDIN
+  TIKTOK
+  YOUTUBE
+  PINTEREST
+}
+
+enum ApprovalAction {
+  APPROVE
+  REJECT
+  REQUEST_CHANGES
+}
+
+enum ApprovalStepStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_CHANGES
+  SKIPPED
+}
+
+enum NotificationType {
+  NEW_POST
+  NEW_COMMENT
+  APPROVAL
+  REJECTION
+  MENTION
+  SCHEDULED
+  PUBLISHED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum FileKind {
+  IMAGE
+  VIDEO
+  PDF
+  OTHER
+}
+
+enum SocialAuthMethod {
+  API_KEY
+  OAUTH2
+}
+
+// ============================================================================
+// AUTH / USERS / RBAC
+// ============================================================================
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  password          String? // nullable for OAuth-only users
+  firstName         String
+  lastName          String
+  avatarUrl         String?
+  isEmailVerified   Boolean   @default(false)
+  emailVerifyToken  String?
+  emailVerifyExpiry DateTime?
+  passwordResetToken   String?
+  passwordResetExpiry  DateTime?
+  googleId          String?   @unique
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+
+  agencyId String?
+  agency   Agency? @relation("AgencyUsers", fields: [agencyId], references: [id], onDelete: SetNull)
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  clientId String? // set when the user IS a client contact
+  client   Client? @relation("ClientUsers", fields: [clientId], references: [id], onDelete: SetNull)
+
+  refreshTokens   RefreshToken[]
+  sessions        Session[]
+  createdPosts    Post[]              @relation("PostCreatedBy")
+  comments        Comment[]
+  commentReplies  CommentReply[]
+  approvalSteps   ApprovalStep[]      @relation("ApprovalAssignee")
+  notifications   Notification[]
+  activities      Activity[]
+  uploadedFiles   File[]
+  postVersions    PostVersion[]
+  workspaceMembers WorkspaceMember[]
+  auditLogs       AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@map("users")
+}
+
+model Role {
+  id          String       @id @default(uuid())
+  name        RoleName     @unique
+  description String?
+  users       User[]
+  permissions RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  key         String           @unique // e.g. "posts:create"
+  description String?
+  roles       RolePermission[]
+
+  createdAt DateTime @default(now())
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ============================================================================
+// AGENCY / SUBSCRIPTIONS
+// ============================================================================
+
+model Agency {
+  id       String  @id @default(uuid())
+  name     String
+  logoUrl  String?
+  themeColor String?
+  users    User[]  @relation("AgencyUsers")
+  clients  Client[]
+  socialAccounts SocialAccount[]
+
+  subscriptionId String?       @unique
+  subscription   Subscription?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("agencies")
+}
+
+model Plan {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  priceMonthly  Decimal        @db.Decimal(10, 2)
+  maxClients    Int
+  maxUsers      Int
+  features      Json?
+  subscriptions Subscription[]
+
+  createdAt DateTime @default(now())
+
+  @@map("plans")
+}
+
+model Subscription {
+  id        String             @id @default(uuid())
+  agencyId  String             @unique
+  agency    Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      Plan               @relation(fields: [planId], references: [id])
+  status    SubscriptionStatus @default(TRIALING)
+  startDate DateTime           @default(now())
+  endDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("subscriptions")
+}
+
+// ============================================================================
+// CLIENTS / WORKSPACES
+// ============================================================================
+
+model Client {
+  id               String   @id @default(uuid())
+  agencyId         String
+  agency           Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  companyName      String
+  contactName      String
+  email            String
+  phone            String?
+  industry         String?
+  logoUrl          String?
+  brandColors      Json? // array of hex codes
+  brandGuidelines  String? // free text or file URL
+
+  users      User[]      @relation("ClientUsers")
+  workspace  Workspace?
+  posts      Post[]
+  comments   Comment[]
+  files      File[]
+  activities Activity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agencyId])
+  @@map("clients")
+}
+
+model Workspace {
+  id       String  @id @default(uuid())
+  clientId String  @unique
+  client   Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  members  WorkspaceMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  addedAt DateTime @default(now())
+
+  @@unique([workspaceId, userId])
+  @@map("workspace_members")
+}
+
+// ============================================================================
+// POSTS / MEDIA / TAGS
+// ============================================================================
+
+model Post {
+  id          String     @id @default(uuid())
+  clientId    String
+  client      Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  title       String
+  caption     String?
+  type        PostType
+  platform    Platform
+  publishDate DateTime?
+  status      PostStatus @default(DRAFT)
+
+  createdById String
+  createdBy   User   @relation("PostCreatedBy", fields: [createdById], references: [id])
+
+  media       PostMedia[]
+  tags        PostTag[]
+  comments    Comment[]
+  approval    Approval?
+  versions    PostVersion[]
+  activities  Activity[]
+  notifications Notification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([status])
+  @@map("posts")
+}
+
+model PostMedia {
+  id        String   @id @default(uuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  fileId    String
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  order     Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@map("post_media")
+}
+
+model Tag {
+  id    String    @id @default(uuid())
+  name  String    @unique
+  posts PostTag[]
+
+  createdAt DateTime @default(now())
+
+  @@map("tags")
+}
+
+model PostTag {
+  postId String
+  tagId  String
+  post   Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@map("post_tags")
+}
+
+model PostVersion {
+  id         String   @id @default(uuid())
+  postId     String
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  caption    String?
+  mediaSnapshot Json? // snapshot of media refs at time of edit
+  schedule   DateTime?
+  editorId   String
+  editor     User     @relation(fields: [editorId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@map("post_versions")
+}
+
+// ============================================================================
+// APPROVAL WORKFLOW
+// ============================================================================
+
+model Approval {
+  id     String @id @default(uuid())
+  postId String @unique
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  steps ApprovalStep[]
+
+  currentStepOrder Int      @default(1)
+  completed        Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("approvals")
+}
+
+model ApprovalStep {
+  id         String             @id @default(uuid())
+  approvalId String
+  approval   Approval           @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+  order      Int // e.g. 1=Designer, 2=Marketing Manager, 3=Client, 4=CEO
+  roleLabel  String // free-text label for this step, e.g. "Designer"
+  assigneeId String?
+  assignee   User?              @relation("ApprovalAssignee", fields: [assigneeId], references: [id])
+  status     ApprovalStepStatus @default(PENDING)
+  action     ApprovalAction?
+  comment    String?
+  decidedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([approvalId])
+  @@map("approval_steps")
+}
+
+// ============================================================================
+// COMMENTS
+// ============================================================================
+
+model Comment {
+  id         String   @id @default(uuid())
+  postId     String
+  post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  clientId   String?
+  client     Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  authorId   String
+  author     User     @relation(fields: [authorId], references: [id])
+  body       String
+  mentions   Json? // array of user ids mentioned
+  attachments Json? // array of file URLs
+  resolved   Boolean  @default(false)
+
+  replies CommentReply[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([postId])
+  @@map("comments")
+}
+
+model CommentReply {
+  id        String   @id @default(uuid())
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  body      String
+  mentions  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([commentId])
+  @@map("comment_replies")
+}
+
+// ============================================================================
+// FILES (MEDIA LIBRARY — Cloudinary-backed)
+// ============================================================================
+
+model File {
+  id           String   @id @default(uuid())
+  clientId     String?
+  client       Client?  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+
+  kind         FileKind
+  url          String
+  publicId     String? // Cloudinary public_id
+  folder       String?
+  originalName String
+  mimeType     String
+  size         Int // bytes
+
+  postMedia PostMedia[]
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@map("files")
+}
+
+// ============================================================================
+// NOTIFICATIONS / ACTIVITY / AUDIT
+// ============================================================================
+
+model Notification {
+  id      String           @id @default(uuid())
+  userId  String
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type    NotificationType
+  title   String
+  body    String?
+  postId  String?
+  post    Post?            @relation(fields: [postId], references: [id], onDelete: SetNull)
+  read    Boolean          @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+model Activity {
+  id       String  @id @default(uuid())
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  postId   String?
+  post     Post?   @relation(fields: [postId], references: [id], onDelete: SetNull)
+  userId   String?
+  user     User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action   String // e.g. "post.created", "post.approved"
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([clientId])
+  @@index([userId])
+  @@map("activities")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  ipAddress String?
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// SOCIAL ACCOUNTS (Platform API Keys / OAuth tokens)
+// ============================================================================
+
+model SocialAccount {
+  id          String            @id @default(uuid())
+  agencyId    String
+  agency      Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  clientId    String?
+  platform    Platform
+  accountName String
+  accountId   String?           // platform-specific account/page/channel ID
+  authMethod  SocialAuthMethod  @default(API_KEY)
+  // Credentials stored encrypted — never returned in API responses
+  credentials Json
+  isActive    Boolean           @default(true)
+  expiresAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([agencyId])
+  @@map("social_accounts")
+}
