@@ -1,6 +1,8 @@
 # ---- Build stage ----
 FROM node:20-alpine AS builder
 WORKDIR /app
+# Install required system dependencies for Prisma
+RUN apk add --no-cache openssl1.1-compat
 COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci
@@ -11,6 +13,8 @@ RUN npm run build
 # ---- Production stage ----
 FROM node:20-alpine
 WORKDIR /app
+# Install required system dependencies for Prisma
+RUN apk add --no-cache openssl1.1-compat
 ENV NODE_ENV=production
 COPY package*.json ./
 COPY prisma ./prisma
